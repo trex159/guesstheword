@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Yes-No-Maybe</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Eingangsscreen -->
+  <div id="screen-join">
+    <h1>Yes-No-Maybe</h1>
+    <input type="text" id="gameCode" placeholder="Room code">
+    <input type="text" id="username" placeholder="Username">
+    <div style="font-size: 0.95em; color: #6e2100; margin-bottom: 0.5em;">
+      Enter a username. You also need a room code to join an existing room.
+    </div>
+    <div style="display: flex; gap: 0.5em;">
+      <button id="createBtn">Create Room</button>
+      <button id="joinBtn">Join Room</button>
+    </div>
+    <div id="join-error" style="color: red;"></div>
+
+    <!-- Lobby chat -->
+    <div id="lobby-chat" style="margin-top:1em; display:none;">
+      <h4>Lobby Chat</h4>
+      <div id="lobby-chat-box" style="border:1px solid #ddd; background:#fff; color:#000; height:120px; overflow:auto; padding:8px; margin-bottom:6px;"></div>
+      <div style="display:flex; gap:6px;">
+        <input type="text" id="lobby-chat-input" placeholder="Message to lobby...">
+        <button id="lobby-send-btn">Send</button>
+      </div>
+    </div>
+
+    <div id="playerListContainer" style="margin-top:1em; display:none;">
+      <div id="lobbyStatus"></div>
+      <h3>Players in room:</h3>
+      <ul id="playerList"></ul>
+      <button id="startGameBtn" style="display:none;">Start Game</button>
+    </div>
+  </div>
+
+
+
+  <!-- Waiting screen -->
+  <div id="screen-waiting" style="display: none;">
+    <h2>Please wait...</h2>
+    <div>Wait for other players to be ready.</div>
+  </div>
+
+  <!-- Chat / Spiel-Info (simplified) -->
+  <div id="screen-discussion" style="display: none;">
+    <h2>Chat / Hinweise</h2>
+    <div id="mainQuestion"></div>
+    <ul id="answersList"></ul>
+  </div>
+
+  <!-- Result screen -->
+  <div id="screen-result" style="display: none;">
+    <h2>Result</h2>
+    <div id="resultText"></div>
+      <button id="leaveRoomToLobbyBtn">Leave Room</button>
+  </div>
+
+  <!-- Neues Spielscreen -->
+  <div id="screen-game" style="display: none;">
+    <h2>Guess the Word Game</h2>
+    <div id="explainer-word" style="font-weight:800; color:var(--brown); margin-bottom:6px; display:none;"></div>
+    <div id="word-display">_ _ _ _ _</div>
+    <div id="chat-box" class="chat-box"></div>
+
+    <!-- Guesser UI -->
+    <div id="guesser-controls">
+      <input type="text" id="guess-input" placeholder="Type your guess here...">
+      <button id="submit-guess">Submit Guess</button>
+    </div>
+
+    <!-- Explainer UI -->
+    <div id="explainer-controls" style="display:none; margin-top:8px;">
+      <div id="choose-method" style="display:block; margin-bottom:8px;">
+        <button id="btn-random-word">Get random word</button>
+        <span style="margin-left:8px; color:#6e2100;">or</span>
+        <input type="text" id="custom-word" placeholder="Choose custom word" style="margin-left:8px; width:120px;">
+        <button id="set-custom-word">Set Word</button>
+      </div>
+      <div style="display:flex; gap:6px; margin-bottom:6px;">
+        <button id="btn-yes">yes</button>
+        <button id="btn-no">no</button>
+        <button id="btn-maybe">maybe</button>
+        <button id="btn-idk">idk</button>
+      </div>
+      <div style="margin-top:6px;">
+        <button id="give-hint">Give Hint</button>
+      </div>
+    </div>
+
+    <div style="margin-top:8px; display:flex; gap:6px; align-items:center;">
+      <button id="add-time">+5 Minutes</button>
+      <button id="give-up">Give Up</button>
+      <div id="timer" style="margin-left:auto; font-weight:bold;">Time left: 5:00</div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

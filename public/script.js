@@ -33,6 +33,16 @@ function isValidGameCode(code) {
   return /^[A-Z0-9]+$/i.test(code);
 }
 
+// Helper: map difficulty keys to readable labels (German)
+function diffToLabel(d) {
+  if (!d) return null;
+  if (d === 'easy') return 'Easy';
+  if (d === 'difficult') return 'Difficult';
+  if (d === 'main') return 'Medium';
+  if (d === 'custom') return 'Custom Word';
+  return d;
+}
+
 // Helper: is the current player ingame?
 function isCurrentPlayerIngame() {
   // Fallback: Wenn __playersInGame nicht gesetzt, lasse zu (z.B. beim ersten Start)
@@ -97,11 +107,18 @@ joinBtn.onclick = () => {
 };
 
 function showLobby() {
+  // hide only join/create controls while in a room (keep lobby & player list visible)
+  ['gameCode','username','createBtn','joinBtn','join-error'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
   playerListContainer.style.display = 'block';
   startGameBtn.style.display = 'none';
   document.getElementById('join-error').textContent = '';
   document.getElementById('gameCode').value = currentGameCode;
   updateLobbyStatus('Waiting for more players...');
+  // show lobby chat area
+  const lobby = document.getElementById('lobby-chat'); if (lobby) lobby.style.display = 'block';
 }
 
 // Player list update received
@@ -120,6 +137,13 @@ socket.on('playerList', ({ players, hostName }) => {
   playersInGame = players;
   // track which players are marked ingame for local checks
   window.__playersInGame = players.filter(p => p.ingame).map(p => p.name);
+
+  // Hide only the join/create controls if we are in a room; show them otherwise
+  const amInRoom = players.some(p => p.name === playerName);
+  ['gameCode','username','createBtn','joinBtn','join-error'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = amInRoom ? 'none' : '';
+  });
 
   playerList.innerHTML = '';
   players.forEach(obj => {
@@ -253,7 +277,11 @@ if (playerListContainer) {
     leaveBtn.onclick = () => {
       socket.emit('leaveRoom', { code: currentGameCode });
       playerListContainer.style.display = 'none';
-      screenJoin.style.display = 'block';
+      // restore join/create inputs and buttons
+      ['gameCode','username','createBtn','joinBtn','join-error'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = '';
+      });
       startGameBtn.style.display = 'none';
       currentGameCode = '';
       isHost = false;
@@ -426,13 +454,27 @@ function clearAllChats() {
   const lobbyBox = document.getElementById('lobby-chat-box'); if (lobbyBox) lobbyBox.innerHTML = '';
 }
 
-function appendChat(msg) {
-  if (!chatBox) return;
+function appendToBox(box, msg) {
+  if (!box) return;
   const p = document.createElement('p');
   p.textContent = `${msg.from}: ${msg.text}`;
-  chatBox.appendChild(p);
-  chatBox.scrollTop = chatBox.scrollHeight;
+  // apply classes similar to in-game chat styling
+  if (msg.from === 'System') {
+    p.className = 'system';
+  } else if (msg.from === playerName) {
+    p.className = 'me';
+  } else {
+    p.className = 'user';
+  }
+  box.appendChild(p);
+  box.scrollTop = box.scrollHeight;
 }
+
+function appendChat(msg) {
+  // default: append to in-game chat box
+  if (!chatBox) return;
+  appendToBox(chatBox, msg);
+} 
 
 socket.on('gameStarted', (data) => {
   console.log('Received gameStarted', data);
@@ -442,6 +484,14 @@ socket.on('gameStarted', (data) => {
   isGuesser = data.role === 'guesser';
   isExplainer = data.role === 'explainer';
   hintUsed = false;
+
+  // show difficulty (if provided)
+  const diffEl = document.getElementById('word-difficulty');
+  if (diffEl) {
+    const label = diffToLabel(data.difficulty);
+    diffEl.textContent = label ? `Difficulty: ${label}` : '';
+    diffEl.style.display = label ? 'block' : 'none';
+  }
 
   // update UI
   document.getElementById('guesser-controls').style.display = isGuesser ? 'block' : 'none';
@@ -496,13 +546,11 @@ socket.on('blanksUpdate', ({ blanks }) => {
 
 socket.on('chatMessage', (msg) => {
   appendChat(msg);
-  // Also append to lobby chat if visible
+  // Also append to lobby chat if visible, using same styling/format
   const lobbyBox = document.getElementById('lobby-chat-box');
-  if (lobbyBox && document.getElementById('lobby-chat').style.display !== 'none') {
-    const p = document.createElement('p');
-    p.textContent = `${msg.from}: ${msg.text}`;
-    lobbyBox.appendChild(p);
-    lobbyBox.scrollTop = lobbyBox.scrollHeight;
+  const lobbyEl = document.getElementById('lobby-chat');
+  if (lobbyBox && lobbyEl && lobbyEl.style.display !== 'none') {
+    appendToBox(lobbyBox, msg);
   }
 });
 
@@ -554,10 +602,17 @@ socket.on('hintGiven', ({ blanks, index, letter }) => {
   }
 });
 
-socket.on('wordChosen', ({ by, blanks }) => {
+socket.on('wordChosen', ({ by, blanks, difficulty }) => {
   // hide explainer choose UI and notify players
   appendChat({ from: 'System', text: `${by} has set the word.` });
   document.getElementById('word-display').innerText = blanks;
+  // show difficulty indicator
+  const diffEl = document.getElementById('word-difficulty');
+  if (diffEl) {
+    const label = diffToLabel(difficulty);
+    diffEl.textContent = label ? `Difficulty: ${label}` : '';
+    diffEl.style.display = label ? 'block' : 'none';
+  }
   const choose = document.getElementById('choose-method');
   if (choose) choose.style.display = 'none';
   // hide give-hint if visible until round starts
@@ -565,12 +620,9 @@ socket.on('wordChosen', ({ by, blanks }) => {
   if (hint) hint.style.display = 'none';
 });
 
-socket.on('gameWon', ({ winner, word }) => {
-  appendChat({ from: 'System', text: `${winner} guessed the word '${word}' — both win!` });
-  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-});
+// merged into main gameWon handler
 
-socket.on('timeUp', ({ word }) => {
+socket.on('timeUp', ({ word, difficulty }) => {
   // clear and reset UI
   clearAllChats();
   timeLeft = 0; updateTimerDisplay();
@@ -584,10 +636,13 @@ socket.on('timeUp', ({ word }) => {
   document.getElementById('screen-game').style.display = 'none';
   document.getElementById('screen-result').style.display = 'block';
   const resultEl = document.getElementById('resultText');
-  resultEl.textContent = `Time is up. The word was: ${word}`;
+  const diffLabel = diffToLabel(difficulty);
+  resultEl.textContent = `Time is up. The word was: ${word}` + (diffLabel ? ` (Difficulty: ${diffLabel})` : '');
+  // reload to fully reset client state after showing result
+  setTimeout(() => { location.reload(); }, 4500);
 });
 
-socket.on('gameAborted', ({ by, reason }) => {
+socket.on('gameAborted', ({ by, reason, word, difficulty }) => {
   // clear chats and reset visuals immediately
   clearAllChats();
   timeLeft = 0; updateTimerDisplay();
@@ -597,12 +652,20 @@ socket.on('gameAborted', ({ by, reason }) => {
   const hintBtn = document.querySelector('#explainer-controls #give-hint'); if (hintBtn) { hintBtn.disabled = true; hintBtn.style.display = 'none'; }
   appendChat({ from: 'System', text: `Game aborted: ${reason || by}` });
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-  // show result/lobby UI after short delay
+  // show result screen revealing the word (if any) then reload
   setTimeout(() => {
     document.getElementById('screen-game').style.display = 'none';
-    document.getElementById('playerListContainer').style.display = 'block';
-    const lobby = document.getElementById('lobby-chat'); if (lobby) lobby.style.display = 'none';
-  }, 1500);
+    document.getElementById('screen-result').style.display = 'block';
+    const resultEl = document.getElementById('resultText');
+    if (typeof word !== 'undefined' && word !== null) {
+      const diffLabel = diffToLabel(difficulty);
+      resultEl.textContent = `Game aborted. The word was: ${word}` + (diffLabel ? ` (Difficulty: ${diffLabel})` : '');
+    } else {
+      resultEl.textContent = `Game aborted: ${reason || by}`;
+    }
+    // finally reload to fully reset state
+    setTimeout(() => { location.reload(); }, 4500);
+  }, 500);
 });
 
 // show server error messages (like missing role before start)
@@ -683,7 +746,7 @@ if (lobbyInput) {
 }
 
 // Show winner screen when game won
-socket.on('gameWon', ({ winner, word }) => {
+socket.on('gameWon', ({ winner, word, difficulty }) => {
   // clear chats and reset game visuals
   clearAllChats();
   timeLeft = 0; updateTimerDisplay();
@@ -696,7 +759,10 @@ socket.on('gameWon', ({ winner, word }) => {
   document.getElementById('screen-game').style.display = 'none';
   document.getElementById('screen-result').style.display = 'block';
   const resultEl = document.getElementById('resultText');
-  resultEl.textContent = `${winner} guessed correctly! Word: ${word}. Both players win!`;
+  const diffLabel = diffToLabel(difficulty);
+  resultEl.textContent = `${winner} guessed correctly! Word: ${word}. Both players win!` + (diffLabel ? ` (Difficulty: ${diffLabel})` : '');
+  // reload to fully reset client state after showing result
+  setTimeout(() => { location.reload(); }, 4500);
 });
 
 // Guesser submits a guess via Enter

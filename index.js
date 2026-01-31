@@ -23,15 +23,33 @@ app.use(express.static(path.join(__dirname, 'public')));
 const games = new Map(); // Map<code, GameSession>
 
 const fs = require('fs');
-// Load wordlist into memory
+// Load main wordlist and optional difficulty-specific lists into memory
 const wordlistPath = path.join(__dirname, 'shared', 'wordlist.txt');
+const wordlistEasyPath = path.join(__dirname, 'shared', 'wordlist-easy.txt');
+const wordlistDifficultPath = path.join(__dirname, 'shared', 'wordlist-difficult.txt');
 let wordlist = [];
+let wordlistEasy = [];
+let wordlistDifficult = [];
 try {
   const wl = fs.readFileSync(wordlistPath, 'utf8');
   wordlist = wl.split(/\r?\n/).map(w => w.trim()).filter(Boolean);
   console.log(`Loaded ${wordlist.length} words from wordlist.`);
 } catch (err) {
   console.warn('Could not load wordlist:', err.message);
+}
+try {
+  const wl = fs.readFileSync(wordlistEasyPath, 'utf8');
+  wordlistEasy = wl.split(/\r?\n/).map(w => w.trim()).filter(Boolean);
+  console.log(`Loaded ${wordlistEasy.length} words from wordlist-easy.`);
+} catch (err) {
+  // optional
+}
+try {
+  const wl = fs.readFileSync(wordlistDifficultPath, 'utf8');
+  wordlistDifficult = wl.split(/\r?\n/).map(w => w.trim()).filter(Boolean);
+  console.log(`Loaded ${wordlistDifficult.length} words from wordlist-difficult.`);
+} catch (err) {
+  // optional
 }
 
 function generateCode() {
@@ -41,9 +59,19 @@ function generateCode() {
 function computeBlanks(word, revealedIndices = []) {
   const blanks = [];
   for (let i = 0; i < word.length; i++) {
-    if (revealedIndices.includes(i)) blanks.push(word[i]);
-    else if (word[i] === ' ') blanks.push(' ');
-    else blanks.push('_');
+    // if already revealed, show original char
+    if (revealedIndices.includes(i)) {
+      blanks.push(word[i]);
+      continue;
+    }
+    const ch = word[i];
+    // show non-letter characters (spaces, hyphens, punctuation) as-is
+    if (!/[A-Za-z]/.test(ch)) {
+      blanks.push(ch);
+    } else {
+      // letter and not revealed => underscore
+      blanks.push('_');
+    }
   }
   return blanks.join(' ');
 }
@@ -225,7 +253,7 @@ io.on('connection', (socket) => {
           // Wenn Spiel im Gange und zu wenige Spieler, abbrechen (2-player game)
           if (game.state !== 'lobby' && game.players.length < 2) {
             if (game.timer) clearInterval(game.timer);
-            io.to(game.code).emit('gameAborted', { reason: 'Not enough players. Game aborted.' });
+            io.to(game.code).emit('gameAborted', { reason: 'Not enough players. Game aborted.', word: game.word || null, difficulty: game.difficulty || null });
             games.delete(game.code);
             break;
           }
@@ -277,7 +305,7 @@ io.on('connection', (socket) => {
         if (text.trim().toLowerCase() === game.word.trim().toLowerCase()) {
           // Guesser wins
           if (game.timer) clearInterval(game.timer);
-          io.to(game.code).emit('gameWon', { winner: player.name, word: game.word });
+          io.to(game.code).emit('gameWon', { winner: player.name, word: game.word, difficulty: game.difficulty || null });
           game.state = 'ended';
           // optionally remove game after a short time
           setTimeout(() => {
@@ -303,30 +331,51 @@ io.on('connection', (socket) => {
       // simple validation: letters and spaces only
       if (!/^[A-Za-zÄÖÜäöüß\s-]+$/.test(word)) return callback({ error: 'Invalid word.' });
       game.word = word;
+      game.difficulty = 'custom';
       game.revealedIndices = [];
       game.hintUsed = false;
-      io.to(game.code).emit('wordChosen', { by: getPlayerById(game, socket.id).name, blanks: computeBlanks(game.word, game.revealedIndices) });
+      io.to(game.code).emit('wordChosen', { by: getPlayerById(game, socket.id).name, blanks: computeBlanks(game.word, game.revealedIndices), difficulty: game.difficulty });
       // Start the round now
       startRound(game);
-      if (callback) callback({ success: true });
+      if (callback) callback({ success: true, difficulty: game.difficulty });
     } catch (err) {
       if (callback) callback({ error: 'Server error' });
     }
   });
 
-  // Explainer chooses a random word from list
+  // Explainer chooses a random word from list with probabilities:
+  // main wordlist = 90%, easy = 5%, difficult = 5%
   socket.on('chooseRandomWord', (payload, callback) => {
     try {
       const game = findGameBySocket(socket.id);
       if (!game) return;
       if (socket.id !== game.explainerId) return;
-      if (wordlist.length === 0) return callback({ error: 'No words available.' });
-      game.word = wordlist[Math.floor(Math.random() * wordlist.length)];
+      // ensure we have at least one word somewhere
+      if (wordlist.length === 0 && wordlistEasy.length === 0 && wordlistDifficult.length === 0) return callback({ error: 'No words available.' });
+      // pick source based on probability
+      const r = Math.random();
+      let source = 'main';
+      let candidateList = wordlist;
+      if (r >= 0.9 && wordlistEasy.length > 0) {
+        source = 'easy';
+        candidateList = wordlistEasy;
+      } else if (r >= 0.95 && wordlistDifficult.length > 0) {
+        source = 'difficult';
+        candidateList = wordlistDifficult;
+      } else if (r >= 0.9 && wordlistEasy.length === 0 && wordlistDifficult.length > 0) {
+        // fallback if only difficult exists
+        source = 'difficult';
+        candidateList = wordlistDifficult;
+      }
+      // choose a random word from candidate list
+      const chosen = candidateList[Math.floor(Math.random() * candidateList.length)];
+      game.word = chosen;
+      game.difficulty = source; // 'main', 'easy', 'difficult'
       game.revealedIndices = [];
       game.hintUsed = false;
-      io.to(game.code).emit('wordChosen', { by: getPlayerById(game, socket.id).name, blanks: computeBlanks(game.word, game.revealedIndices) });
+      io.to(game.code).emit('wordChosen', { by: getPlayerById(game, socket.id).name, blanks: computeBlanks(game.word, game.revealedIndices), difficulty: game.difficulty });
       startRound(game);
-      if (callback) callback({ success: true });
+      if (callback) callback({ success: true, difficulty: game.difficulty });
     } catch (err) {
       if (callback) callback({ error: 'Server error' });
     }
@@ -395,7 +444,7 @@ io.on('connection', (socket) => {
       const game = findGameBySocket(socket.id);
       if (!game) return;
       if (game.timer) clearInterval(game.timer);
-      io.to(game.code).emit('gameAborted', { by: getPlayerById(game, socket.id).name, reason });
+      io.to(game.code).emit('gameAborted', { by: getPlayerById(game, socket.id).name, reason, word: game.word, difficulty: game.difficulty || null });
       game.state = 'ended';
       setTimeout(() => {
         games.delete(game.code);
@@ -503,7 +552,7 @@ function startRound(game) {
     io.to(game.code).emit('timerUpdate', { seconds: game.timerSeconds });
     if (game.timerSeconds <= 0) {
       clearInterval(game.timer);
-      io.to(game.code).emit('timeUp', { word: game.word });
+      io.to(game.code).emit('timeUp', { word: game.word, difficulty: game.difficulty || null });
       game.state = 'ended';
       games.delete(game.code);
     }
@@ -516,7 +565,8 @@ function startRound(game) {
     const payload = {
       role,
       blanks: computeBlanks(game.word, game.revealedIndices),
-      secondsLeft: game.timerSeconds
+      secondsLeft: game.timerSeconds,
+      difficulty: game.difficulty || null
     };
     if (role === 'explainer') payload.word = game.word; // explainer knows the word
     console.log(`🔹 Emitting gameStarted to ${p.id} (role=${role})`);
